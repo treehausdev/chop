@@ -476,23 +476,14 @@ export default function ChopPage() {
     const source = ctx.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(gainNodeRef.current!);
-    source.start(0, start, duration);
+    source.loop = true;
+    source.loopStart = start;
+    source.loopEnd = start + duration;
+    source.start(0, start);
     sourcesRef.current.set(index, source);
 
     setActivePads(prev => new Set(prev).add(index));
     setPlayingRegion(index);
-
-    source.onended = () => {
-      if (sourcesRef.current.get(index) === source) {
-        setActivePads(prev => {
-          const next = new Set(prev);
-          next.delete(index);
-          return next;
-        });
-        sourcesRef.current.delete(index);
-        setPlayingRegion(prev => prev === index ? null : prev);
-      }
-    };
   }, [audioBuffer, getAudioContext, getSlices, customSlices]);
 
   const releasePad = useCallback((index: number) => {
