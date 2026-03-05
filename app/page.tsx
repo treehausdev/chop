@@ -689,6 +689,7 @@ export default function ChopPage() {
     source.loopEnd = editOutRef.current;
     source.start(0, editInRef.current);
     previewSourceRef.current = source;
+    previewStartCtxTimeRef.current = ctx.currentTime;
     setPreviewingEdit(true);
   }, [previewingEdit, audioBuffer, getAudioContext, stopEditPreview]);
 
@@ -939,17 +940,54 @@ export default function ChopPage() {
     drawEditWaveform();
   }, [editingPad, editIn, editOut, viewStart, viewEnd, drawEditWaveform]);
 
-  // Use ResizeObserver to draw waveform once canvas gets its real size (sheet animation)
+  // Use ResizeObserver + retries to draw waveform once canvas gets real size (sheet animation)
   useEffect(() => {
     if (editingPad === null) return;
     const canvas = editCanvasRef.current;
     if (!canvas) return;
+
     const observer = new ResizeObserver(() => {
       drawEditWaveform();
     });
     observer.observe(canvas);
-    return () => observer.disconnect();
+
+    // Also retry a few times during sheet open animation in case ResizeObserver misses it
+    const retries = [50, 150, 300, 500];
+    const timers = retries.map(ms => setTimeout(() => drawEditWaveform(), ms));
+
+    return () => {
+      observer.disconnect();
+      timers.forEach(clearTimeout);
+    };
   }, [editingPad, drawEditWaveform]);
+
+  // ─── Playhead ticker during preview ────────────────────────────
+  const [editPlayheadPos, setEditPlayheadPos] = useState<number | null>(null);
+  const editAnimRef = useRef<number>(0);
+  const previewStartCtxTimeRef = useRef(0);
+
+  useEffect(() => {
+    if (!previewingEdit || !audioBuffer) {
+      setEditPlayheadPos(null);
+      cancelAnimationFrame(editAnimRef.current);
+      return;
+    }
+    // Record the context time when preview started
+    previewStartCtxTimeRef.current = audioCtxRef.current?.currentTime ?? 0;
+    const inT = editInRef.current;
+    const outT = editOutRef.current;
+    const sliceDur = outT - inT;
+    const tick = () => {
+      if (!audioCtxRef.current || !previewSourceRef.current) return;
+      const elapsed = (audioCtxRef.current.currentTime - previewStartCtxTimeRef.current);
+      const posInSlice = elapsed % sliceDur;
+      const timePos = inT + posInSlice;
+      setEditPlayheadPos(timePos);
+      editAnimRef.current = requestAnimationFrame(tick);
+    };
+    editAnimRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(editAnimRef.current);
+  }, [previewingEdit, audioBuffer]);
 
   // ─────────────────────────────────────────────────────────────────
 
@@ -1462,6 +1500,25 @@ export default function ChopPage() {
                   touchAction: "none",
                 }}
               />
+              {/* Playhead ticker */}
+              {editPlayheadPos !== null && audioBuffer && (viewEndRef.current - viewStartRef.current) > 0 && (() => {
+                const pct = ((editPlayheadPos - viewStartRef.current) / (viewEndRef.current - viewStartRef.current)) * 100;
+                if (pct < 0 || pct > 100) return null;
+                return (
+                  <div style={{
+                    position: "absolute",
+                    top: 0,
+                    left: `calc(${pct}%)`,
+                    width: 2,
+                    height: 140,
+                    background: "#fff",
+                    pointerEvents: "none",
+                    zIndex: 10,
+                    boxShadow: "0 0 6px rgba(255,255,255,0.5)",
+                    transition: "none",
+                  }} />
+                );
+              })()}
               {/* Touch target labels */}
               <div style={{
                 position: "absolute",
