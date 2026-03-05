@@ -98,10 +98,19 @@ export default function ChopPage() {
   // Editor sheet refs
   const editCanvasRef = useRef<HTMLCanvasElement>(null);
   const previewSourceRef = useRef<AudioBufferSourceNode | null>(null);
-  const draggingRef = useRef<"in" | "out" | null>(null);
+  const draggingRef = useRef<"in" | "out" | "pan" | null>(null);
   // Refs to hold latest edit values during drag (avoids stale closure)
   const editInRef = useRef(0);
   const editOutRef = useRef(0);
+  // Zoom & pan: viewStart/viewEnd define the visible time window (in seconds)
+  const [viewStart, setViewStart] = useState(0);
+  const [viewEnd, setViewEnd] = useState(0);
+  const viewStartRef = useRef(0);
+  const viewEndRef = useRef(0);
+  // Smooth dragging: offset from grab point to handle position
+  const dragOffsetRef = useRef(0);
+  const panStartXRef = useRef(0);
+  const panStartViewRef = useRef(0);
 
   // Reset to home state helper
   const resetToHome = useCallback(() => {
@@ -630,6 +639,7 @@ export default function ChopPage() {
 
   const openEditSheet = useCallback((padIndex: number) => {
     stopEditPreview();
+    const dur = audioBuffer?.duration ?? 0;
     let inTime: number, outTime: number;
     const custom = customSlices.get(padIndex);
     if (custom) {
@@ -643,13 +653,24 @@ export default function ChopPage() {
         outTime = slice.end;
       } else {
         inTime = 0;
-        outTime = audioBuffer?.duration ?? 0;
+        outTime = dur;
       }
     }
     editInRef.current = inTime;
     editOutRef.current = outTime;
     setEditIn(inTime);
     setEditOut(outTime);
+
+    // Auto-zoom: show the slice filling ~60% of the view, with context on each side
+    const sliceDur = outTime - inTime;
+    const padding = sliceDur * 0.35; // 35% padding on each side
+    const vStart = Math.max(0, inTime - padding);
+    const vEnd = Math.min(dur, outTime + padding);
+    viewStartRef.current = vStart;
+    viewEndRef.current = vEnd;
+    setViewStart(vStart);
+    setViewEnd(vEnd);
+
     setEditingPad(padIndex);
   }, [customSlices, getSlices, audioBuffer, stopEditPreview]);
 
@@ -682,6 +703,19 @@ export default function ChopPage() {
     setEditingPad(null);
   }, [editingPad, stopEditPreview]);
 
+  // Convert pixel x to time using current view window
+  const pxToTime = useCallback((px: number, canvasWidth: number) => {
+    const vDur = viewEndRef.current - viewStartRef.current;
+    return viewStartRef.current + (px / canvasWidth) * vDur;
+  }, []);
+
+  const timeToPx = useCallback((time: number, canvasWidth: number) => {
+    const vDur = viewEndRef.current - viewStartRef.current;
+    return ((time - viewStartRef.current) / vDur) * canvasWidth;
+  }, []);
+
+  const HANDLE_HIT_PX = 30; // generous touch target for handles
+
   const handleEditPointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
     const canvas = editCanvasRef.current;
@@ -689,24 +723,61 @@ export default function ChopPage() {
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const w = rect.width;
-    const inX = (editInRef.current / audioBuffer.duration) * w;
-    const outX = (editOutRef.current / audioBuffer.duration) * w;
-    draggingRef.current = Math.abs(x - inX) <= Math.abs(x - outX) ? "in" : "out";
-  }, [audioBuffer]);
+    const inPx = timeToPx(editInRef.current, w);
+    const outPx = timeToPx(editOutRef.current, w);
+    const distIn = Math.abs(x - inPx);
+    const distOut = Math.abs(x - outPx);
+
+    if (distIn < HANDLE_HIT_PX && distIn <= distOut) {
+      // Grab IN handle — store offset so handle doesn't jump
+      draggingRef.current = "in";
+      dragOffsetRef.current = inPx - x;
+    } else if (distOut < HANDLE_HIT_PX) {
+      // Grab OUT handle
+      draggingRef.current = "out";
+      dragOffsetRef.current = outPx - x;
+    } else {
+      // Pan the view
+      draggingRef.current = "pan";
+      panStartXRef.current = x;
+      panStartViewRef.current = viewStartRef.current;
+    }
+  }, [audioBuffer, timeToPx]);
 
   const handleEditPointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!draggingRef.current || !audioBuffer) return;
     const canvas = editCanvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
-    const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
-    const time = (x / rect.width) * audioBuffer.duration;
+    const w = rect.width;
+    const x = e.clientX - rect.left;
+    const dur = audioBuffer.duration;
+
+    if (draggingRef.current === "pan") {
+      const dx = x - panStartXRef.current;
+      const vDur = viewEndRef.current - viewStartRef.current;
+      const timeDelta = -(dx / w) * vDur;
+      let newStart = panStartViewRef.current + timeDelta;
+      // Clamp to track bounds
+      newStart = Math.max(0, Math.min(dur - vDur, newStart));
+      viewStartRef.current = newStart;
+      viewEndRef.current = newStart + vDur;
+      setViewStart(newStart);
+      setViewEnd(newStart + vDur);
+      return;
+    }
+
+    // Handle dragging — apply offset for smooth grab
+    const handlePx = x + dragOffsetRef.current;
+    const time = pxToTime(Math.max(0, Math.min(w, handlePx)), w);
+    const clampedTime = Math.max(0, Math.min(dur, time));
+
     if (draggingRef.current === "in") {
-      const newVal = Math.min(time, editOutRef.current - 0.05);
+      const newVal = Math.min(clampedTime, editOutRef.current - 0.05);
       editInRef.current = newVal;
       setEditIn(newVal);
-    } else {
-      const newVal = Math.max(time, editInRef.current + 0.05);
+    } else if (draggingRef.current === "out") {
+      const newVal = Math.max(clampedTime, editInRef.current + 0.05);
       editOutRef.current = newVal;
       setEditOut(newVal);
     }
@@ -715,124 +786,158 @@ export default function ChopPage() {
       previewSourceRef.current.loopStart = editInRef.current;
       previewSourceRef.current.loopEnd = editOutRef.current;
     }
-  }, [audioBuffer]);
+  }, [audioBuffer, pxToTime]);
 
   const handleEditPointerUp = useCallback(() => {
     draggingRef.current = null;
   }, []);
 
-  // Draw the editor waveform — extracted so we can call it from both useEffect and ResizeObserver
+  // Zoom helpers
+  const zoomEdit = useCallback((factor: number) => {
+    if (!audioBuffer) return;
+    const dur = audioBuffer.duration;
+    const vDur = viewEndRef.current - viewStartRef.current;
+    const center = (viewStartRef.current + viewEndRef.current) / 2;
+    const newVDur = Math.max(0.2, Math.min(dur, vDur * factor));
+    let newStart = center - newVDur / 2;
+    let newEnd = center + newVDur / 2;
+    if (newStart < 0) { newEnd -= newStart; newStart = 0; }
+    if (newEnd > dur) { newStart -= (newEnd - dur); newEnd = dur; }
+    newStart = Math.max(0, newStart);
+    viewStartRef.current = newStart;
+    viewEndRef.current = newEnd;
+    setViewStart(newStart);
+    setViewEnd(newEnd);
+  }, [audioBuffer]);
+
+  // Draw the editor waveform — uses view window for zoom/pan
   const drawEditWaveform = useCallback(() => {
     if (editingPad === null) return;
     const canvas = editCanvasRef.current;
     if (!canvas || !audioBuffer) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    const ctx2d = canvas.getContext("2d");
+    if (!ctx2d) return;
     const dpr = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
     if (rect.width === 0) return;
     canvas.width = rect.width * dpr;
     canvas.height = rect.height * dpr;
-    ctx.scale(dpr, dpr);
+    ctx2d.scale(dpr, dpr);
     const w = rect.width, h = rect.height;
+    const dur = audioBuffer.duration;
+    const data = audioBuffer.getChannelData(0);
+    const vStart = viewStartRef.current;
+    const vEnd = viewEndRef.current;
+    const vDur = vEnd - vStart;
 
-    const inX = (editInRef.current / audioBuffer.duration) * w;
-    const outX = (editOutRef.current / audioBuffer.duration) * w;
+    // Map time → pixel in view window
+    const t2px = (t: number) => ((t - vStart) / vDur) * w;
+
+    const inPx = t2px(editInRef.current);
+    const outPx = t2px(editOutRef.current);
 
     // Background
-    ctx.fillStyle = "#0d0d0d";
-    ctx.fillRect(0, 0, w, h);
+    ctx2d.fillStyle = "#0d0d0d";
+    ctx2d.fillRect(0, 0, w, h);
 
-    // Full track waveform — dim outside selection, bright inside
-    const data = audioBuffer.getChannelData(0);
-    const step = Math.ceil(data.length / w);
+    // Waveform for visible window — dimmed
+    const startSample = Math.floor((vStart / dur) * data.length);
+    const endSample = Math.ceil((vEnd / dur) * data.length);
+    const visibleSamples = endSample - startSample;
+    const step = Math.max(1, Math.ceil(visibleSamples / w));
 
-    // Draw dimmed full waveform first
-    ctx.strokeStyle = "#1a1a1a";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
+    ctx2d.strokeStyle = "#1a1a1a";
+    ctx2d.lineWidth = 1;
+    ctx2d.beginPath();
     for (let x = 0; x < w; x++) {
-      const idx = Math.floor(x * data.length / w);
+      const sIdx = startSample + Math.floor((x / w) * visibleSamples);
       let min = 1, max = -1;
-      for (let j = 0; j < step && idx + j < data.length; j++) {
-        const v = data[idx + j];
+      for (let j = 0; j < step && sIdx + j < data.length; j++) {
+        const v = data[sIdx + j];
         if (v < min) min = v;
         if (v > max) max = v;
       }
-      ctx.moveTo(x, (1 + min) * h / 2);
-      ctx.lineTo(x, (1 + max) * h / 2);
+      ctx2d.moveTo(x, (1 + min) * h / 2);
+      ctx2d.lineTo(x, (1 + max) * h / 2);
     }
-    ctx.stroke();
+    ctx2d.stroke();
 
-    // Draw bright waveform only in selected region
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(inX, 0, outX - inX, h);
-    ctx.clip();
+    // Bright waveform inside selection
+    const clipLeft = Math.max(0, inPx);
+    const clipRight = Math.min(w, outPx);
+    if (clipRight > clipLeft) {
+      ctx2d.save();
+      ctx2d.beginPath();
+      ctx2d.rect(clipLeft, 0, clipRight - clipLeft, h);
+      ctx2d.clip();
 
-    // Selected region background tint
-    ctx.fillStyle = "rgba(255, 0, 110, 0.08)";
-    ctx.fillRect(inX, 0, outX - inX, h);
+      ctx2d.fillStyle = "rgba(255, 0, 110, 0.08)";
+      ctx2d.fillRect(clipLeft, 0, clipRight - clipLeft, h);
 
-    ctx.strokeStyle = "#00b4d8";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let x = Math.floor(inX); x < Math.ceil(outX) && x < w; x++) {
-      const idx = Math.floor(x * data.length / w);
-      let min = 1, max = -1;
-      for (let j = 0; j < step && idx + j < data.length; j++) {
-        const v = data[idx + j];
-        if (v < min) min = v;
-        if (v > max) max = v;
+      ctx2d.strokeStyle = "#00b4d8";
+      ctx2d.lineWidth = 1;
+      ctx2d.beginPath();
+      for (let x = Math.floor(clipLeft); x < Math.ceil(clipRight); x++) {
+        const sIdx = startSample + Math.floor((x / w) * visibleSamples);
+        let min = 1, max = -1;
+        for (let j = 0; j < step && sIdx + j < data.length; j++) {
+          const v = data[sIdx + j];
+          if (v < min) min = v;
+          if (v > max) max = v;
+        }
+        ctx2d.moveTo(x, (1 + min) * h / 2);
+        ctx2d.lineTo(x, (1 + max) * h / 2);
       }
-      ctx.moveTo(x, (1 + min) * h / 2);
-      ctx.lineTo(x, (1 + max) * h / 2);
+      ctx2d.stroke();
+      ctx2d.restore();
     }
-    ctx.stroke();
-    ctx.restore();
 
     // Dim overlay outside selection
-    ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
-    ctx.fillRect(0, 0, inX, h);
-    ctx.fillRect(outX, 0, w - outX, h);
+    ctx2d.fillStyle = "rgba(0, 0, 0, 0.45)";
+    if (inPx > 0) ctx2d.fillRect(0, 0, inPx, h);
+    if (outPx < w) ctx2d.fillRect(outPx, 0, w - outPx, h);
 
-    // IN handle
-    ctx.strokeStyle = "#00ff88";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(inX, 0);
-    ctx.lineTo(inX, h);
-    ctx.stroke();
-    ctx.fillStyle = "#00ff88";
-    ctx.beginPath();
-    ctx.moveTo(inX - 8, 0);
-    ctx.lineTo(inX + 8, 0);
-    ctx.lineTo(inX + 4, 22);
-    ctx.lineTo(inX - 4, 22);
-    ctx.closePath();
-    ctx.fill();
+    // IN handle (only draw if in view)
+    if (inPx >= -10 && inPx <= w + 10) {
+      ctx2d.strokeStyle = "#00ff88";
+      ctx2d.lineWidth = 2;
+      ctx2d.beginPath();
+      ctx2d.moveTo(inPx, 0);
+      ctx2d.lineTo(inPx, h);
+      ctx2d.stroke();
+      ctx2d.fillStyle = "#00ff88";
+      ctx2d.beginPath();
+      ctx2d.moveTo(inPx - 8, 0);
+      ctx2d.lineTo(inPx + 8, 0);
+      ctx2d.lineTo(inPx + 4, 22);
+      ctx2d.lineTo(inPx - 4, 22);
+      ctx2d.closePath();
+      ctx2d.fill();
+    }
 
     // OUT handle
-    ctx.strokeStyle = "#ff4444";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(outX, 0);
-    ctx.lineTo(outX, h);
-    ctx.stroke();
-    ctx.fillStyle = "#ff4444";
-    ctx.beginPath();
-    ctx.moveTo(outX - 8, 0);
-    ctx.lineTo(outX + 8, 0);
-    ctx.lineTo(outX + 4, 22);
-    ctx.lineTo(outX - 4, 22);
-    ctx.closePath();
-    ctx.fill();
+    if (outPx >= -10 && outPx <= w + 10) {
+      ctx2d.strokeStyle = "#ff4444";
+      ctx2d.lineWidth = 2;
+      ctx2d.beginPath();
+      ctx2d.moveTo(outPx, 0);
+      ctx2d.lineTo(outPx, h);
+      ctx2d.stroke();
+      ctx2d.fillStyle = "#ff4444";
+      ctx2d.beginPath();
+      ctx2d.moveTo(outPx - 8, 0);
+      ctx2d.lineTo(outPx + 8, 0);
+      ctx2d.lineTo(outPx + 4, 22);
+      ctx2d.lineTo(outPx - 4, 22);
+      ctx2d.closePath();
+      ctx2d.fill();
+    }
   }, [editingPad, audioBuffer]);
 
-  // Redraw on edit point changes
+  // Redraw on edit point or view changes
   useEffect(() => {
     drawEditWaveform();
-  }, [editingPad, editIn, editOut, drawEditWaveform]);
+  }, [editingPad, editIn, editOut, viewStart, viewEnd, drawEditWaveform]);
 
   // Use ResizeObserver to draw waveform once canvas gets its real size (sheet animation)
   useEffect(() => {
@@ -1374,6 +1479,43 @@ export default function ChopPage() {
                   OUT {editOut.toFixed(2)}s
                 </span>
               </div>
+            </div>
+
+            {/* Zoom controls */}
+            <div style={{ padding: "0 16px 10px", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+              <button
+                onClick={() => zoomEdit(1.5)}
+                style={{
+                  background: "#1a1a1a", border: "1px solid #333", borderRadius: 6,
+                  color: "#aaa", fontSize: 16, fontWeight: 700, width: 36, height: 32,
+                  cursor: "pointer", fontFamily: "monospace", display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+              >−</button>
+              <button
+                onClick={() => {
+                  if (!audioBuffer) return;
+                  viewStartRef.current = 0;
+                  viewEndRef.current = audioBuffer.duration;
+                  setViewStart(0);
+                  setViewEnd(audioBuffer.duration);
+                }}
+                style={{
+                  background: "#1a1a1a", border: "1px solid #333", borderRadius: 6,
+                  color: "#666", fontSize: 10, padding: "6px 10px",
+                  cursor: "pointer", fontFamily: "monospace",
+                }}
+              >FULL</button>
+              <button
+                onClick={() => zoomEdit(0.6)}
+                style={{
+                  background: "#1a1a1a", border: "1px solid #333", borderRadius: 6,
+                  color: "#aaa", fontSize: 16, fontWeight: 700, width: 36, height: 32,
+                  cursor: "pointer", fontFamily: "monospace", display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+              >+</button>
+              <span style={{ fontFamily: "monospace", fontSize: 10, color: "#444", marginLeft: 6 }}>
+                {viewStart.toFixed(1)}s – {viewEnd.toFixed(1)}s
+              </span>
             </div>
 
             {/* Action buttons */}
