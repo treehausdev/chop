@@ -721,8 +721,8 @@ export default function ChopPage() {
     draggingRef.current = null;
   }, []);
 
-  // Redraw editor waveform whenever edit points change or sheet opens
-  useEffect(() => {
+  // Draw the editor waveform — extracted so we can call it from both useEffect and ResizeObserver
+  const drawEditWaveform = useCallback(() => {
     if (editingPad === null) return;
     const canvas = editCanvasRef.current;
     if (!canvas || !audioBuffer) return;
@@ -736,14 +736,19 @@ export default function ChopPage() {
     ctx.scale(dpr, dpr);
     const w = rect.width, h = rect.height;
 
+    const inX = (editInRef.current / audioBuffer.duration) * w;
+    const outX = (editOutRef.current / audioBuffer.duration) * w;
+
     // Background
     ctx.fillStyle = "#0d0d0d";
     ctx.fillRect(0, 0, w, h);
 
-    // Full track waveform
+    // Full track waveform — dim outside selection, bright inside
     const data = audioBuffer.getChannelData(0);
     const step = Math.ceil(data.length / w);
-    ctx.strokeStyle = "#2a2a2a";
+
+    // Draw dimmed full waveform first
+    ctx.strokeStyle = "#1a1a1a";
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (let x = 0; x < w; x++) {
@@ -759,10 +764,20 @@ export default function ChopPage() {
     }
     ctx.stroke();
 
-    ctx.globalAlpha = 0.5;
-    ctx.strokeStyle = "#555";
+    // Draw bright waveform only in selected region
+    ctx.save();
     ctx.beginPath();
-    for (let x = 0; x < w; x++) {
+    ctx.rect(inX, 0, outX - inX, h);
+    ctx.clip();
+
+    // Selected region background tint
+    ctx.fillStyle = "rgba(255, 0, 110, 0.08)";
+    ctx.fillRect(inX, 0, outX - inX, h);
+
+    ctx.strokeStyle = "#00b4d8";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = Math.floor(inX); x < Math.ceil(outX) && x < w; x++) {
       const idx = Math.floor(x * data.length / w);
       let min = 1, max = -1;
       for (let j = 0; j < step && idx + j < data.length; j++) {
@@ -774,14 +789,12 @@ export default function ChopPage() {
       ctx.lineTo(x, (1 + max) * h / 2);
     }
     ctx.stroke();
-    ctx.globalAlpha = 1;
+    ctx.restore();
 
-    const inX = (editIn / audioBuffer.duration) * w;
-    const outX = (editOut / audioBuffer.duration) * w;
-
-    // Selected region highlight
-    ctx.fillStyle = "rgba(255, 0, 110, 0.15)";
-    ctx.fillRect(inX, 0, outX - inX, h);
+    // Dim overlay outside selection
+    ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
+    ctx.fillRect(0, 0, inX, h);
+    ctx.fillRect(outX, 0, w - outX, h);
 
     // IN handle
     ctx.strokeStyle = "#00ff88";
@@ -814,7 +827,24 @@ export default function ChopPage() {
     ctx.lineTo(outX - 4, 22);
     ctx.closePath();
     ctx.fill();
-  }, [editingPad, editIn, editOut, audioBuffer]);
+  }, [editingPad, audioBuffer]);
+
+  // Redraw on edit point changes
+  useEffect(() => {
+    drawEditWaveform();
+  }, [editingPad, editIn, editOut, drawEditWaveform]);
+
+  // Use ResizeObserver to draw waveform once canvas gets its real size (sheet animation)
+  useEffect(() => {
+    if (editingPad === null) return;
+    const canvas = editCanvasRef.current;
+    if (!canvas) return;
+    const observer = new ResizeObserver(() => {
+      drawEditWaveform();
+    });
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, [editingPad, drawEditWaveform]);
 
   // ─────────────────────────────────────────────────────────────────
 
