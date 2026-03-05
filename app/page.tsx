@@ -76,6 +76,8 @@ export default function ChopPage() {
 
   // Custom per-pad slices — persists across pad count changes
   const [customSlices, setCustomSlices] = useState<Map<number, { start: number; end: number }>>(new Map());
+  // Independent AudioBuffer per pad (extracted slice) — for library/cross-song support
+  const padBuffersRef = useRef<Map<number, AudioBuffer>>(new Map());
 
   // Pad editor sheet state
   const [editingPad, setEditingPad] = useState<number | null>(null);
@@ -130,6 +132,7 @@ export default function ChopPage() {
     setSearchQuery("");
     setSearchResults([]);
     setCustomSlices(new Map());
+    padBuffersRef.current.clear();
     setEditingPad(null);
     setPreviewingEdit(false);
   }, []);
@@ -155,6 +158,25 @@ export default function ChopPage() {
     }
     return audioCtxRef.current;
   }, []);
+
+  // Extract a slice from a source AudioBuffer into a new standalone AudioBuffer
+  const extractSliceBuffer = useCallback((source: AudioBuffer, start: number, end: number): AudioBuffer => {
+    const sampleRate = source.sampleRate;
+    const channels = source.numberOfChannels;
+    const startSample = Math.floor(start * sampleRate);
+    const endSample = Math.min(Math.ceil(end * sampleRate), source.length);
+    const length = endSample - startSample;
+    const ctx = getAudioContext();
+    const newBuffer = ctx.createBuffer(channels, length, sampleRate);
+    for (let ch = 0; ch < channels; ch++) {
+      const sourceData = source.getChannelData(ch);
+      const destData = newBuffer.getChannelData(ch);
+      for (let i = 0; i < length; i++) {
+        destData[i] = sourceData[startSample + i];
+      }
+    }
+    return newBuffer;
+  }, [getAudioContext]);
 
   useEffect(() => {
     if (gainNodeRef.current) {
@@ -379,21 +401,33 @@ export default function ChopPage() {
     const w = rect.width, h = rect.height;
     ctx.clearRect(0, 0, w, h);
 
-    const data = audioBuffer.getChannelData(0);
+    // Use independent pad buffer if available, otherwise slice from shared buffer
+    const padBuf = padBuffersRef.current.get(padIndex);
+    const hasCustom = customSlices.has(padIndex);
+    let data: Float32Array;
     let startSample: number, endSample: number;
-    const custom = customSlices.get(padIndex);
-    if (custom) {
-      startSample = Math.floor((custom.start / audioBuffer.duration) * data.length);
-      endSample = Math.floor((custom.end / audioBuffer.duration) * data.length);
+
+    if (padBuf) {
+      // Independent buffer — draw the whole thing
+      data = padBuf.getChannelData(0);
+      startSample = 0;
+      endSample = data.length;
     } else {
-      const sliceSamples = Math.floor(data.length / padCount);
-      startSample = padIndex * sliceSamples;
-      endSample = Math.min(startSample + sliceSamples, data.length);
+      data = audioBuffer.getChannelData(0);
+      const custom = customSlices.get(padIndex);
+      if (custom) {
+        startSample = Math.floor((custom.start / audioBuffer.duration) * data.length);
+        endSample = Math.floor((custom.end / audioBuffer.duration) * data.length);
+      } else {
+        const sliceSamples = Math.floor(data.length / padCount);
+        startSample = padIndex * sliceSamples;
+        endSample = Math.min(startSample + sliceSamples, data.length);
+      }
     }
     const sliceLen = endSample - startSample;
     const step = Math.max(1, Math.ceil(sliceLen / w));
 
-    ctx.strokeStyle = custom ? "rgba(255,180,100,0.4)" : "rgba(255,255,255,0.3)";
+    ctx.strokeStyle = hasCustom ? "rgba(255,180,100,0.4)" : "rgba(255,255,255,0.3)";
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (let x = 0; x < w; x++) {
@@ -490,18 +524,31 @@ export default function ChopPage() {
     if (!audioBuffer) return;
     const ctx = getAudioContext();
 
-    // Use custom slice if present, otherwise fall back to auto-chop
+    // Check for independent pad buffer first (extracted slice / library chop)
+    const padBuffer = padBuffersRef.current.get(index);
+
+    let buf: AudioBuffer;
     let start: number, dur: number;
-    const custom = customSlices.get(index);
-    if (custom) {
-      start = custom.start;
-      dur = custom.end - custom.start;
+
+    if (padBuffer) {
+      // Independent buffer — plays from 0 to full length
+      buf = padBuffer;
+      start = 0;
+      dur = padBuffer.duration;
     } else {
-      const slices = getSlices();
-      const slice = slices[index];
-      if (!slice) return;
-      start = slice.start;
-      dur = slice.duration;
+      // Shared buffer — use custom slice or auto-chop
+      buf = audioBuffer;
+      const custom = customSlices.get(index);
+      if (custom) {
+        start = custom.start;
+        dur = custom.end - custom.start;
+      } else {
+        const slices = getSlices();
+        const slice = slices[index];
+        if (!slice) return;
+        start = slice.start;
+        dur = slice.duration;
+      }
     }
 
     const existing = sourcesRef.current.get(index);
@@ -511,14 +558,18 @@ export default function ChopPage() {
     }
 
     const source = ctx.createBufferSource();
-    source.buffer = audioBuffer;
+    source.buffer = buf;
     source.connect(gainNodeRef.current!);
     source.loop = true;
     source.loopStart = start;
     source.loopEnd = start + dur;
     source.start(0, start);
     sourcesRef.current.set(index, source);
-    padStartInfoRef.current.set(index, { ctxTime: ctx.currentTime, sliceStart: start, sliceDur: dur });
+
+    // For playhead: track the original slice position in the main track
+    const customInfo = customSlices.get(index);
+    const trackStart = padBuffer ? (customInfo?.start ?? 0) : start;
+    padStartInfoRef.current.set(index, { ctxTime: ctx.currentTime, sliceStart: trackStart, sliceDur: dur });
 
     setActivePads(prev => new Set(prev).add(index));
     setPlayingRegion(index);
@@ -724,15 +775,20 @@ export default function ChopPage() {
   }, [previewingEdit, audioBuffer, getAudioContext, stopEditPreview]);
 
   const saveEditSlice = useCallback(() => {
-    if (editingPad === null) return;
+    if (editingPad === null || !audioBuffer) return;
     stopEditPreview();
+    const inT = editInRef.current;
+    const outT = editOutRef.current;
     setCustomSlices(prev => {
       const next = new Map(prev);
-      next.set(editingPad, { start: editInRef.current, end: editOutRef.current });
+      next.set(editingPad, { start: inT, end: outT });
       return next;
     });
+    // Extract independent AudioBuffer for this pad
+    const sliceBuf = extractSliceBuffer(audioBuffer, inT, outT);
+    padBuffersRef.current.set(editingPad, sliceBuf);
     setEditingPad(null);
-  }, [editingPad, stopEditPreview]);
+  }, [editingPad, audioBuffer, stopEditPreview, extractSliceBuffer]);
 
   // Convert pixel x to time using current view window
   const pxToTime = useCallback((px: number, canvasWidth: number) => {
@@ -1635,6 +1691,7 @@ export default function ChopPage() {
                       next.delete(editingPad);
                       return next;
                     });
+                    padBuffersRef.current.delete(editingPad);
                     setEditingPad(null);
                   }
                 }}
