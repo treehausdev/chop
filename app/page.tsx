@@ -241,25 +241,49 @@ export default function ChopPage() {
     return 120;
   }, []);
 
+  // Playhead animation — works for both full-track play AND pad play
   useEffect(() => {
-    if (!isPlaying) {
+    const hasActivePads = activePads.size > 0;
+    if (!isPlaying && !hasActivePads) {
       setPlaybackPos(null);
       cancelAnimationFrame(animFrameRef.current);
       return;
     }
     const tick = () => {
-      if (!audioCtxRef.current || !fullSourceRef.current || !audioBuffer) return;
-      const elapsed = audioCtxRef.current.currentTime - fullStartTimeRef.current + fullOffsetRef.current;
-      if (elapsed >= audioBuffer.duration) {
-        setPlaybackPos(null);
-        return;
+      if (!audioCtxRef.current || !audioBuffer) return;
+      const now = audioCtxRef.current.currentTime;
+
+      if (isPlaying && fullSourceRef.current) {
+        // Full track playback
+        const elapsed = now - fullStartTimeRef.current + fullOffsetRef.current;
+        if (elapsed >= audioBuffer.duration) {
+          setPlaybackPos(null);
+          return;
+        }
+        setPlaybackPos(elapsed / audioBuffer.duration);
+      } else if (padStartInfoRef.current.size > 0) {
+        // Pad playback — show position of the most recently triggered pad
+        let latestCtxTime = -1;
+        let latestInfo: { ctxTime: number; sliceStart: number; sliceDur: number } | null = null;
+        padStartInfoRef.current.forEach((info) => {
+          if (info.ctxTime > latestCtxTime) {
+            latestCtxTime = info.ctxTime;
+            latestInfo = info;
+          }
+        });
+        if (latestInfo) {
+          const { ctxTime, sliceStart, sliceDur } = latestInfo;
+          const elapsed = now - ctxTime;
+          const posInSlice = elapsed % sliceDur;
+          const trackPos = sliceStart + posInSlice;
+          setPlaybackPos(trackPos / audioBuffer.duration);
+        }
       }
-      setPlaybackPos(elapsed / audioBuffer.duration);
       animFrameRef.current = requestAnimationFrame(tick);
     };
     animFrameRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(animFrameRef.current);
-  }, [isPlaying, audioBuffer]);
+  }, [isPlaying, activePads, audioBuffer]);
 
   const drawWaveform = useCallback(() => {
     const canvas = waveformCanvasRef.current;
@@ -458,22 +482,26 @@ export default function ChopPage() {
     if (file) handleFile(file);
   }, [handleFile]);
 
+  // Track pad start info for playhead animation
+  const padStartInfoRef = useRef<Map<number, { ctxTime: number; sliceStart: number; sliceDur: number }>>(new Map());
+  const padAnimRef = useRef<number>(0);
+
   const triggerPad = useCallback((index: number) => {
     if (!audioBuffer) return;
     const ctx = getAudioContext();
 
     // Use custom slice if present, otherwise fall back to auto-chop
-    let start: number, duration: number;
+    let start: number, dur: number;
     const custom = customSlices.get(index);
     if (custom) {
       start = custom.start;
-      duration = custom.end - custom.start;
+      dur = custom.end - custom.start;
     } else {
       const slices = getSlices();
       const slice = slices[index];
       if (!slice) return;
       start = slice.start;
-      duration = slice.duration;
+      dur = slice.duration;
     }
 
     const existing = sourcesRef.current.get(index);
@@ -487,9 +515,10 @@ export default function ChopPage() {
     source.connect(gainNodeRef.current!);
     source.loop = true;
     source.loopStart = start;
-    source.loopEnd = start + duration;
+    source.loopEnd = start + dur;
     source.start(0, start);
     sourcesRef.current.set(index, source);
+    padStartInfoRef.current.set(index, { ctxTime: ctx.currentTime, sliceStart: start, sliceDur: dur });
 
     setActivePads(prev => new Set(prev).add(index));
     setPlayingRegion(index);
@@ -501,6 +530,7 @@ export default function ChopPage() {
       try { source.stop(); } catch {}
       sourcesRef.current.delete(index);
     }
+    padStartInfoRef.current.delete(index);
     setActivePads(prev => {
       const next = new Set(prev);
       next.delete(index);
