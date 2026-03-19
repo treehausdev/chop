@@ -6,6 +6,7 @@ web-app/.vercel/
 # iOS
 ios/**/*.xcuserdata/
 ios/**/xcuserdata/
+ios/**/*.xcworkspace/
 ios/build/
 ios/DerivedData/
 *.xcworkspace/xcuserdata/
