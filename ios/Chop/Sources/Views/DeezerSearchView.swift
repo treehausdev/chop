@@ -10,6 +10,8 @@ struct DeezerSearchView: View {
     @State private var isSearching = false
     @State private var isDownloading: Int? = nil // track id being downloaded
     @State private var error: String?
+    @State private var debounceTask: Task<Void, Never>?
+    @FocusState private var isSearchFocused: Bool
     
     private let deezer = DeezerService()
     
@@ -28,6 +30,10 @@ struct DeezerSearchView: View {
                             .textFieldStyle(.plain)
                             .foregroundStyle(.white)
                             .autocorrectionDisabled()
+                            .focused($isSearchFocused)
+                            .onChange(of: query) { _, newValue in
+                                debounceSearch(newValue)
+                            }
                             .onSubmit { performSearch() }
                         
                         if !query.isEmpty {
@@ -93,6 +99,9 @@ struct DeezerSearchView: View {
                     }
                 }
             }
+            .onAppear {
+                isSearchFocused = true
+            }
             .navigationTitle("Search Songs")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
@@ -102,6 +111,23 @@ struct DeezerSearchView: View {
                         .foregroundStyle(.orange)
                 }
             }
+        }
+    }
+    
+    private func debounceSearch(_ value: String) {
+        debounceTask?.cancel()
+        
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else {
+            results = []
+            isSearching = false
+            return
+        }
+        
+        debounceTask = Task {
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            performSearch()
         }
     }
     
