@@ -4,9 +4,9 @@ import AVFoundation
 /// A single audio slice from a chopped track
 struct Sample: Identifiable {
     let id: Int
-    let startTime: TimeInterval
-    let endTime: TimeInterval
-    let buffer: AVAudioPCMBuffer
+    var startTime: TimeInterval
+    var endTime: TimeInterval
+    var buffer: AVAudioPCMBuffer
     
     var duration: TimeInterval {
         endTime - startTime
@@ -18,7 +18,7 @@ struct ChoppedTrack: Identifiable {
     let id = UUID()
     let name: String
     let originalURL: URL
-    let samples: [Sample]
+    var samples: [Sample]
     let sampleRate: Double
     let totalDuration: TimeInterval
 }

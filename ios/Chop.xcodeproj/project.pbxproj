@@ -14,6 +14,12 @@
 		A10000010000000000000005 /* AudioEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000005; };
 		A10000010000000000000006 /* ChopViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000006; };
 		A10000010000000000000007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000007; };
+		A10000010000000000000008 /* WaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000008; };
+		A10000010000000000000009 /* SliceDetailSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000009; };
+		A10000010000000000000010 /* MusicLibraryPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000010; };
+		A10000010000000000000011 /* DeezerSearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000011; };
+		A10000010000000000000012 /* DeezerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000012; };
+		A10000010000000000000013 /* DeezerModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000013; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -24,6 +30,12 @@
 		A20000010000000000000005 /* AudioEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioEngine.swift; sourceTree = "<group>"; };
 		A20000010000000000000006 /* ChopViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChopViewModel.swift; sourceTree = "<group>"; };
 		A20000010000000000000007 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A20000010000000000000008 /* WaveformView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformView.swift; sourceTree = "<group>"; };
+		A20000010000000000000009 /* SliceDetailSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SliceDetailSheet.swift; sourceTree = "<group>"; };
+		A20000010000000000000010 /* MusicLibraryPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicLibraryPicker.swift; sourceTree = "<group>"; };
+		A20000010000000000000011 /* DeezerSearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeezerSearchView.swift; sourceTree = "<group>"; };
+		A20000010000000000000012 /* DeezerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeezerService.swift; sourceTree = "<group>"; };
+		A20000010000000000000013 /* DeezerModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeezerModels.swift; sourceTree = "<group>"; };
 		A30000010000000000000001 /* Chop.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Chop.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -80,6 +92,10 @@
 			children = (
 				A20000010000000000000002 /* ContentView.swift */,
 				A20000010000000000000003 /* PadGrid.swift */,
+				A20000010000000000000008 /* WaveformView.swift */,
+				A20000010000000000000009 /* SliceDetailSheet.swift */,
+				A20000010000000000000010 /* MusicLibraryPicker.swift */,
+				A20000010000000000000011 /* DeezerSearchView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -96,6 +112,7 @@
 			isa = PBXGroup;
 			children = (
 				A20000010000000000000004 /* Sample.swift */,
+				A20000010000000000000013 /* DeezerModels.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -104,6 +121,7 @@
 			isa = PBXGroup;
 			children = (
 				A20000010000000000000005 /* AudioEngine.swift */,
+				A20000010000000000000012 /* DeezerService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -191,6 +209,12 @@
 				A10000010000000000000004 /* Sample.swift in Sources */,
 				A10000010000000000000005 /* AudioEngine.swift in Sources */,
 				A10000010000000000000006 /* ChopViewModel.swift in Sources */,
+				A10000010000000000000008 /* WaveformView.swift in Sources */,
+				A10000010000000000000009 /* SliceDetailSheet.swift in Sources */,
+				A10000010000000000000010 /* MusicLibraryPicker.swift in Sources */,
+				A10000010000000000000011 /* DeezerSearchView.swift in Sources */,
+				A10000010000000000000012 /* DeezerService.swift in Sources */,
+				A10000010000000000000013 /* DeezerModels.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -259,6 +283,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Chop;
+				INFOPLIST_KEY_NSAppleMusicUsageDescription = "Chop needs access to your music library to sample and chop songs.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -286,6 +311,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Chop;
+				INFOPLIST_KEY_NSAppleMusicUsageDescription = "Chop needs access to your music library to sample and chop songs.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
